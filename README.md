@@ -9,11 +9,21 @@
 
 ## 直接下载
 
-| 平台 | 文件 | 大小 | SHA-256 |
-|---|---|---|---|
-| Windows x64（免安装单文件） | [`dist/DeltaCodeViewer-portable-win64.exe`](dist/DeltaCodeViewer-portable-win64.exe) | 11.5 MB | `6DB9472E…BD237B2E` |
-| Android（arm64 / armv7 / x86_64 通用） | [`dist/DeltaCodeViewer-android.apk`](dist/DeltaCodeViewer-android.apk) | 157 KB | `C1E6989F…E8FE933` |
+前往 **[Releases](https://github.com/ikun10099/-/releases/latest)** 页面下载，点开 `Assets` 即可：
 
+| 平台 | 文件 | 大小 | 直链 |
+|---|---|---|---|
+| Windows 10/11 x64（免安装单文件） | `DeltaCodeViewer-portable-win64.exe` | 11.5 MB | [下载](https://github.com/ikun10099/-/releases/latest/download/DeltaCodeViewer-portable-win64.exe) |
+| Android 5.0+（arm64 / armv7 / x86_64 通用） | `DeltaCodeViewer-android.apk` | 157 KB | [下载](https://github.com/ikun10099/-/releases/latest/download/DeltaCodeViewer-android.apk) |
+
+SHA-256：
+
+```
+6DB9472E0FB4C301290C1203F974EB8AD60126B5A28745B49F0F3BEFBD237B2E  DeltaCodeViewer-portable-win64.exe
+C1E6989F1E05758850C7FEE1D9D09C817716B894C724AA5602F94EC47E8FE933  DeltaCodeViewer-android.apk
+```
+
+> `releases/latest/download/<文件名>` 是 GitHub 的稳定直链，发新版后自动指向最新，不用改链接。
 > exe 未做 Authenticode 签名，首次运行 SmartScreen 会提示「更多信息 → 仍要运行」。
 > apk 使用自签名证书，安装时需允许「未知来源」。
 
