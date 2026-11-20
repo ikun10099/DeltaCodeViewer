@@ -131,7 +131,9 @@
     savedAt: '',
     selected: '',
     theme: 'dark',
-    loading: false
+    loading: false,
+    daily: null,
+    dailyLoading: false
   };
 
   var native = (typeof window.Native !== 'undefined') ? window.Native : null;
@@ -399,6 +401,101 @@
     }, 1800);
   }
 
+  /* ── 今日密码卡 ───────────────────────────────────── */
+
+  var elDaily, elDWhen, elDGrid, elDHint;
+
+  function renderDaily() {
+    var d = S.daily;
+    if (!elDaily) return;
+    if (!d || !d.items || !d.items.length) {
+      elDGrid.innerHTML = '<div class="dempty">暂无数据</div>';
+      elDWhen.textContent = '';
+      return;
+    }
+    var html = [];
+    for (var i = 0; i < d.items.length && i < 6; i++) {
+      var it = d.items[i];
+      html.push('<div class="dcell">' +
+        '<div class="dn">' + esc(it.name) + '</div>' +
+        '<div class="dc">' + esc(it.code) + '</div></div>');
+    }
+    elDGrid.innerHTML = html.join('');
+
+    var bits = [];
+    if (d.updatedText) bits.push('官方 ' + d.updatedText);
+    else if (d.date) bits.push('官方 ' + d.date);
+    if (d.fetchedAt) bits.push('拉取 ' + d.fetchedAt);
+    elDWhen.textContent = bits.join('  ·  ');
+    elDaily.hidden = false;
+  }
+
+  function loadDailyCache() {
+    if (!hasNative() || !native.loadDaily) return;
+    var raw = '';
+    try { raw = native.loadDaily() || ''; } catch (e) { return; }
+    if (!raw) return;
+    try {
+      S.daily = JSON.parse(raw);
+      renderDaily();
+    } catch (e) { /* ignore */ }
+  }
+
+  function startDailyFetch() {
+    if (S.dailyLoading) return;
+    S.dailyLoading = true;
+    if (elDHint) { elDHint.textContent = '正在获取…'; elDHint.className = 'dhint'; }
+    if (hasNative() && native.startDailyFetch) native.startDailyFetch();
+  }
+
+  function onDailyPayload(raw) {
+    S.dailyLoading = false;
+    try {
+      // Java 侧 emit("onDaily", obj.toString()) 传进来的已经是对象字面量；
+      // 从缓存读的是字符串。两种都接。
+      var d = (typeof raw === 'string') ? JSON.parse(raw) : raw;
+      if (!d || !d.items) throw new Error('bad payload');
+      S.daily = d;
+      renderDaily();
+      if (elDHint) {
+        var stamp = d.fetchedAt || '';
+        elDHint.textContent = '✓ 已更新' + (stamp ? ' · ' + stamp : '');
+        elDHint.className = 'dhint ok';
+      }
+    } catch (e) {
+      if (elDHint) { elDHint.textContent = '⚠ 数据解析失败'; elDHint.className = 'dhint err'; }
+    }
+  }
+
+  function onDailyFail(msg) {
+    S.dailyLoading = false;
+    if (elDHint) {
+      elDHint.textContent = S.daily && S.daily.items && S.daily.items.length
+        ? ('⚠ 刷新失败，显示缓存 · ' + msg)
+        : ('⚠ 获取失败 · ' + msg);
+      elDHint.className = 'dhint err';
+    }
+  }
+
+  /* 跨天自动换密码：每分钟检查一次缓存的 date 是否为今天 */
+  var dailyTick = null;
+  function scheduleDailyTick() {
+    if (dailyTick) return;
+    dailyTick = setInterval(function () {
+      var today = isoToday();
+      var cur = (S.daily && S.daily.date) || '';
+      if (cur !== today && !S.dailyLoading) startDailyFetch();
+    }, 60000);
+  }
+
+  function isoToday() {
+    var d = new Date();
+    var m = String(d.getMonth() + 1), dd = String(d.getDate());
+    if (m.length < 2) m = '0' + m;
+    if (dd.length < 2) dd = '0' + dd;
+    return d.getFullYear() + '-' + m + '-' + dd;
+  }
+
   /* ── 主题 ──────────────────────────────────────────── */
 
   function applyTheme(t) {
@@ -457,6 +554,8 @@
       var pct = pages > 0 ? Math.min(100, Math.round(page * 100 / pages)) : 0;
       elBarFill.style.width = pct + '%';
     },
+    onDaily: function (raw) { onDailyPayload(raw); },
+    onDailyError: function (msg) { onDailyFail(fmt(msg)); },
     onDone: function (savedAt, count, failed) {
       S.loading = false;
       elLoading.hidden = true;
@@ -611,6 +710,10 @@
     elSheet = $('sheet');
     elMask = $('sheetMask');
     elToast = $('toast');
+    elDaily = $('daily');
+    elDWhen = $('dWhen');
+    elDGrid = $('dGrid');
+    elDHint = $('dHint');
     elS = {
       badge: $('sBadge'), title: $('sTitle'), meta: $('sMeta'),
       tags: $('sTags'), code: $('sCode'), copy: $('btnCopy'), close: $('btnClose')
@@ -626,6 +729,15 @@
 
     syncSortUI();
     loadCache();
+    loadDailyCache();
+    // 缓存里不是今天的就立刻拉一次；是今天的就只等 0 点后的轮询
+    if (!S.daily || S.daily.date !== isoToday()) {
+      startDailyFetch();
+    } else if (elDHint) {
+      elDHint.textContent = '每日 0 点后自动更新';
+      elDHint.className = 'dhint';
+    }
+    scheduleDailyTick();
 
     // 有缓存先显示，随后静默刷新；无缓存则直接拉取
     setTimeout(function () {

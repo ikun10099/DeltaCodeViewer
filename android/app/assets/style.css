@@ -141,6 +141,41 @@ html, body {
 .fchip.quest { border-style: dashed; }
 .fchip.quest.on { border-style: solid; }
 
+/* ── 今日密码卡 ─────────────────────────── */
+.daily {
+  flex: 0 0 auto; margin: 0 16px 8px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+  padding: 11px 12px 9px;
+}
+.dhead { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
+.dhead .dic { font-size: 13px; }
+.dhead .dt { font-size: 13.5px; font-weight: 700; color: var(--text); }
+.dhead .dwhen {
+  margin-left: auto; font-size: 11px; color: var(--text_muted);
+  font-variant-numeric: tabular-nums;
+}
+.dgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.dcell {
+  background: var(--card_alt); border: 1px solid var(--border); border-radius: 9px;
+  padding: 6px 9px 7px;
+}
+.dcell .dn { font-size: 10.5px; color: var(--text_muted); line-height: 1.5; }
+.dcell .dc {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 19px; font-weight: 700; color: var(--accent); letter-spacing: .08em;
+  line-height: 1.25; font-variant-numeric: tabular-nums;
+}
+.dfoot { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
+.dfoot .dhint {
+  flex: 1 1 auto; font-size: 10.5px; color: var(--text_muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dfoot .dhint.ok { color: var(--success); }
+.dfoot .dhint.err { color: var(--error); }
+.dgrid .dempty {
+  grid-column: 1 / -1; padding: 6px 2px; font-size: 11.5px; color: var(--text_muted);
+}
+
 /* ── 排序行 ─────────────────────────────── */
 .sortrow {
   display: flex; align-items: center; gap: 8px;
