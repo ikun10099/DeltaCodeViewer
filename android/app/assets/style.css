@@ -1,6 +1,10 @@
 /* 三角洲行动 · 改枪码库 — Android H5 界面
    调色板与桌面版 app.py PALETTES 完全一致 */
 
+/* hidden 属性必须压过 .loading/.sheet/.toast 里的 display 声明，
+   否则 elLoading.hidden = true 之后加载层依然可见 */
+[hidden] { display: none !important; }
+
 :root {
   --root: #080b10; --header: #0e131b; --side: #0b0f16;
   --panel: #0f141d; --card: #141b26; --card_alt: #0b1017;
