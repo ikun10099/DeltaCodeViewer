@@ -39,11 +39,14 @@ public class MainActivity extends Activity {
 
     private static final String HOST = "delta-code.cn";
     private static final String API_PATH = "/api/loadouts";
+    private static final String DAILY_PATH = "/api/daily-password";
     private static final String UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
     private static final String CACHE_NAME = "cache.json";
+    private static final String DAILY_NAME = "daily.json";
 
     private WebView web;
     private volatile boolean fetching = false;
+    private volatile boolean dailyFetching = false;
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override
@@ -85,8 +88,12 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public String loadCache() {
+            return readFile(CACHE_NAME);
+        }
+
+        private String readFile(String name) {
             try {
-                File f = new File(getFilesDir(), CACHE_NAME);
+                File f = new File(getFilesDir(), name);
                 if (!f.exists()) return "";
                 java.io.FileInputStream in = new java.io.FileInputStream(f);
                 ByteArrayOutputStream bo = new ByteArrayOutputStream();
@@ -126,6 +133,29 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public boolean isFetching() {
             return fetching;
+        }
+
+        /** 今日地图密码：读缓存，没有返回空串。 */
+        @JavascriptInterface
+        public String loadDaily() {
+            return readFile(DAILY_NAME);
+        }
+
+        /** 今日地图密码：后台拉取，完成后回调 window.__native.onDaily(json) / onDailyError(msg)。 */
+        @JavascriptInterface
+        public void startDailyFetch() {
+            if (dailyFetching) return;
+            dailyFetching = true;
+            new Thread(new Runnable() {
+                public void run() {
+                    doDailyFetch();
+                }
+            }).start();
+        }
+
+        @JavascriptInterface
+        public boolean isDailyFetching() {
+            return dailyFetching;
         }
 
         @JavascriptInterface
@@ -201,13 +231,14 @@ public class MainActivity extends Activity {
             }
 
             String savedAt = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(new Date());
+            JSONArray merged = mergeWithCache(items);
             JSONObject cache = new JSONObject();
             cache.put("saved_at", savedAt);
-            cache.put("items", items);
+            cache.put("items", merged);
             writeCache(cache.toString());
 
             fetching = false;
-            emit("onDone", JSONObject.quote(savedAt) + "," + items.length() + "," + new JSONArray(failed).toString());
+            emit("onDone", JSONObject.quote(savedAt) + "," + merged.length() + "," + new JSONArray(failed).toString());
         } catch (Throwable t) {
             fetching = false;
             String msg = t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
@@ -215,24 +246,42 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void writeCache(String text) {
+    private void doDailyFetch() {
         try {
-            File tmp = new File(getFilesDir(), CACHE_NAME + ".tmp");
-            FileOutputStream fo = new FileOutputStream(tmp);
-            fo.write(text.getBytes("UTF-8"));
-            fo.flush();
-            fo.close();
-            File dst = new File(getFilesDir(), CACHE_NAME);
-            if (dst.exists()) dst.delete();
-            tmp.renameTo(dst);
-        } catch (Throwable ignored) {
+            String url = "https://" + HOST + DAILY_PATH;
+            JSONObject d = getJson(url, 3);
+            JSONArray src = d.optJSONArray("items");
+            JSONArray out = new JSONArray();
+            if (src != null) {
+                for (int i = 0; i < src.length(); i++) {
+                    JSONObject o = src.optJSONObject(i);
+                    if (o == null) continue;
+                    JSONObject cell = new JSONObject();
+                    cell.put("name", o.optString("name", ""));
+                    cell.put("code", o.optString("code", ""));
+                    out.put(cell);
+                }
+            }
+            JSONObject cache = new JSONObject();
+            cache.put("items", out);
+            cache.put("date", d.optString("date", ""));
+            cache.put("updatedText", d.optString("updatedText", ""));
+            cache.put("isToday", d.optBoolean("isToday", false));
+            cache.put("fetchedAt", new SimpleDateFormat("HH:mm:ss", Locale.CHINA).format(new Date()));
+            writeFile(DAILY_NAME, cache.toString());
+
+            dailyFetching = false;
+            emit("onDaily", cache.toString());
+        } catch (Throwable t) {
+            dailyFetching = false;
+            String msg = t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
+            emit("onDailyError", JSONObject.quote(msg));
         }
     }
 
-    private JSONObject fetchPage(int page) throws Exception {
-        String url = "https://" + HOST + API_PATH + "?page=" + page;
+    private JSONObject getJson(String url, int tries) throws Exception {
         Exception last = null;
-        for (int attempt = 0; attempt < 3; attempt++) {
+        for (int attempt = 0; attempt < tries; attempt++) {
             HttpURLConnection c = null;
             try {
                 c = (HttpURLConnection) new URL(url).openConnection();
@@ -245,6 +294,15 @@ public class MainActivity extends Activity {
                 c.setRequestProperty("User-Agent", UA);
                 c.setRequestProperty("Connection", "keep-alive");
                 int code = c.getResponseCode();
+                if (code == 429) {
+                    // 服务端 x-ratelimit-limit: 60，连续刷新会撞上限，退避重试
+                    last = new Exception("HTTP 429 请求过于频繁");
+                    try {
+                        Thread.sleep(900L * (attempt + 1));
+                    } catch (InterruptedException ignored) {
+                    }
+                    continue;
+                }
                 if (code != 200) throw new Exception("HTTP " + code);
                 InputStream in = c.getInputStream();
                 String enc = c.getContentEncoding();
@@ -268,6 +326,77 @@ public class MainActivity extends Activity {
             }
         }
         throw last == null ? new Exception("未知网络错误") : last;
+    }
+
+    private String readFile(String name) {
+        try {
+            File f = new File(getFilesDir(), name);
+            if (!f.exists()) return "";
+            java.io.FileInputStream in = new java.io.FileInputStream(f);
+            ByteArrayOutputStream bo = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) bo.write(buf, 0, n);
+            in.close();
+            return new String(bo.toByteArray(), "UTF-8");
+        } catch (Throwable t) {
+            return "";
+        }
+    }
+
+    /** 新数据优先，旧缓存里没被新数据覆盖的条目补在后面（与桌面版 merge_items 同逻辑）。
+     *  这样某一页失败时不会把已有数据丢掉。 */
+    private JSONArray mergeWithCache(JSONArray fresh) {
+        JSONArray out = new JSONArray();
+        java.util.HashSet<String> seen = new java.util.HashSet<String>();
+        for (int i = 0; i < fresh.length(); i++) {
+            JSONObject o = fresh.optJSONObject(i);
+            if (o == null) continue;
+            String k = o.optString("id", "");
+            if (k.length() == 0) k = o.optString("code", "");
+            if (k.length() > 0 && !seen.add(k)) continue;
+            out.put(o);
+        }
+        try {
+            String raw = readFile(CACHE_NAME);
+            if (raw != null && raw.length() > 0) {
+                JSONArray old = new JSONObject(raw).optJSONArray("items");
+                if (old != null) {
+                    for (int i = 0; i < old.length(); i++) {
+                        JSONObject o = old.optJSONObject(i);
+                        if (o == null) continue;
+                        String k = o.optString("id", "");
+                        if (k.length() == 0) k = o.optString("code", "");
+                        if (k.length() > 0 && !seen.add(k)) continue;
+                        out.put(o);
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return out;
+    }
+
+    private void writeCache(String text) {
+        writeFile(CACHE_NAME, text);
+    }
+
+    private void writeFile(String name, String text) {
+        try {
+            File tmp = new File(getFilesDir(), name + ".tmp");
+            FileOutputStream fo = new FileOutputStream(tmp);
+            fo.write(text.getBytes("UTF-8"));
+            fo.flush();
+            fo.close();
+            File dst = new File(getFilesDir(), name);
+            if (dst.exists()) dst.delete();
+            tmp.renameTo(dst);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private JSONObject fetchPage(int page) throws Exception {
+        return getJson("https://" + HOST + API_PATH + "?page=" + page, 3);
     }
 
     @Override
