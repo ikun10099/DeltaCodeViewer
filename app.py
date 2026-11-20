@@ -51,8 +51,10 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
     "Connection": "keep-alive",
 }
+DAILY_PATH = "/api/daily-password"
 CACHE_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "DeltaCodeViewer")
 CACHE_FILE = os.path.join(CACHE_DIR, "cache.json")
+DAILY_FILE = os.path.join(CACHE_DIR, "daily.json")
 MUTEX_NAME = "Global\\DeltaCodeViewer_SingleInstance_v2"
 
 # ────────────────────────────────────────────────────────────── 调色板
@@ -208,14 +210,19 @@ def new_conn():
     return http.client.HTTPSConnection(HOST, 443, timeout=20, context=_SSL_CTX)
 
 
-def fetch_page(conn, page, retries=3):
+def fetch_page(conn, page, retries=4):
     path = f"{API_PATH}?page={page}"
     last = None
-    for _ in range(retries):
+    for attempt in range(retries):
         try:
             conn.request("GET", path, headers=HEADERS)
             resp = conn.getresponse()
             body = resp.read()
+            if resp.status == 429:
+                # 服务端 x-ratelimit-limit 60/分钟，刷新太密会撞限流，退避重试
+                last = RuntimeError("HTTP 429 请求过于频繁")
+                time.sleep(0.9 * (attempt + 1))
+                continue
             if resp.status != 200:
                 raise RuntimeError(f"HTTP {resp.status}")
             enc = (resp.getheader("Content-Encoding") or "").lower()
@@ -254,7 +261,61 @@ def fetch_all(on_page=None):
     return items, total, failed
 
 
+def fetch_daily(retries=3):
+    """拉今日地图密码。返回 {"items":[{name,code}...], "date":..., "updatedText":...}。"""
+    conn = new_conn()
+    last = None
+    try:
+        for _ in range(retries):
+            try:
+                conn.request("GET", DAILY_PATH, headers=HEADERS)
+                resp = conn.getresponse()
+                body = resp.read()
+                if resp.status != 200:
+                    raise RuntimeError(f"HTTP {resp.status}")
+                enc = (resp.getheader("Content-Encoding") or "").lower()
+                if "gzip" in enc:
+                    body = gzip.decompress(body)
+                d = json.loads(body.decode("utf-8"))
+                items = [{"name": fmt(x.get("name")), "code": fmt(x.get("code"))}
+                         for x in (d.get("items") or []) if isinstance(x, dict)]
+                return {"items": items,
+                        "date": fmt(d.get("date")),
+                        "updatedText": fmt(d.get("updatedText")),
+                        "isToday": bool(d.get("isToday")),
+                        "fetchedAt": time.strftime("%H:%M:%S")}
+            except Exception as e:
+                last = e
+                time.sleep(0.4)
+        raise last if last else RuntimeError("未知错误")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 # ────────────────────────────────────────────────────────────── 缓存
+def load_daily_cache():
+    try:
+        with open(DAILY_FILE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_daily_cache(d):
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        tmp = DAILY_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False)
+        os.replace(tmp, DAILY_FILE)
+    except Exception:
+        pass
+
+
 def load_cache():
     try:
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
@@ -750,6 +811,8 @@ class App(tk.Tk):
         self._spin_job = None
         self._spin_frame = 0
         self.cache_saved_at = ""
+        self.daily_data = {}
+        self._daily_loading = False
 
         self.title(APP_NAME)
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
@@ -776,6 +839,7 @@ class App(tk.Tk):
         self._bind_keys()
         self.after(30, self._native_chrome)
         self._load_cached()
+        self._load_daily()
         self.refresh()
 
     # ── 字体 / 外观
@@ -943,6 +1007,8 @@ class App(tk.Tk):
         mid = tk.Frame(parent, bg=p["panel"])
         mid.pack(side="left", fill="both", expand=True)
 
+        self._build_daily(mid)
+
         bar = tk.Frame(mid, bg=p["panel"])
         bar.pack(fill="x", padx=(18, 10), pady=(13, 8))
         self.list_title = tk.Label(bar, text="全部改枪码", bg=p["panel"], fg=p["text"],
@@ -966,6 +1032,141 @@ class App(tk.Tk):
         self.table.set_sort = self.table.set_sort  # noqa: 保持外部可调
 
         tk.Frame(mid, bg=p["border"], width=1).pack(side="right", fill="y")
+
+    def _build_daily(self, parent):
+        """今日地图密码卡片条：3 列 × 2 行，只读展示。"""
+        p, fm = self.pal, self.fam
+        box = tk.Frame(parent, bg=p["panel"])
+        box.pack(fill="x", padx=(18, 16), pady=(13, 0))
+
+        card = tk.Frame(box, bg=p["card"], highlightthickness=1,
+                        highlightbackground=p["border"])
+        card.pack(fill="x")
+
+        head = tk.Frame(card, bg=p["card"])
+        head.pack(fill="x", padx=14, pady=(11, 2))
+        tk.Label(head, text="🔑", bg=p["card"], fg=p["accent"],
+                 font=(fm[0], 11)).pack(side="left")
+        tk.Label(head, text="今日地图密码", bg=p["card"], fg=p["text"],
+                 font=(fm[0], 11, "bold")).pack(side="left", padx=(7, 0))
+        self.daily_when = tk.Label(head, text="", bg=p["card"], fg=p["text_muted"],
+                                   font=(fm[0], 8))
+        self.daily_when.pack(side="right")
+
+        self.daily_grid = tk.Frame(card, bg=p["card"])
+        self.daily_grid.pack(fill="x", padx=12, pady=(4, 0))
+
+        foot = tk.Frame(card, bg=p["card"])
+        foot.pack(fill="x", padx=14, pady=(2, 10))
+        self.daily_hint = tk.Label(foot, text="正在获取…", bg=p["card"],
+                                   fg=p["text_muted"], font=(fm[0], 8), anchor="w")
+        self.daily_hint.pack(side="left")
+
+        self.daily_cells = {}
+
+    def _render_daily(self, data):
+        p, fm = self.pal, self.fam
+        if not hasattr(self, "daily_grid"):
+            return
+        for w in self.daily_grid.winfo_children():
+            w.destroy()
+        self.daily_cells = {}
+        items = (data or {}).get("items") or []
+        if not items:
+            tk.Label(self.daily_grid, text="暂无数据", bg=p["card"],
+                     fg=p["text_muted"], font=(fm[0], 9)).grid(row=0, column=0,
+                                                              sticky="w", padx=2,
+                                                              pady=4)
+            self.daily_when.configure(text="")
+            return
+        cols = 3
+        for i, it in enumerate(items[:6]):
+            r, c = divmod(i, cols)
+            cell = tk.Frame(self.daily_grid, bg=p["card_alt"],
+                            highlightthickness=1, highlightbackground=p["border"])
+            cell.grid(row=r, column=c, sticky="nsew",
+                      padx=(2 if c else 0, 0), pady=(0, 5))
+            self.daily_grid.columnconfigure(c, weight=1)
+            tk.Label(cell, text=it["name"], bg=p["card_alt"], fg=p["text_muted"],
+                     font=(fm[0], 8), anchor="w").pack(fill="x", padx=10, pady=(5, 0))
+            code = tk.Label(cell, text=it["code"], bg=p["card_alt"], fg=p["accent"],
+                            font=(self.fmono[0], 15, "bold"), anchor="w")
+            code.pack(fill="x", padx=10, pady=(0, 6))
+            self.daily_cells[it["name"]] = code
+        when = (data or {}).get("updatedText") or ""
+        date = (data or {}).get("date") or ""
+        fetched = (data or {}).get("fetchedAt") or ""
+        bits = []
+        if when:
+            bits.append("官方 " + when)
+        elif date:
+            bits.append("官方 " + date)
+        if fetched:
+            bits.append("拉取 " + fetched)
+        self.daily_when.configure(text="  ·  ".join(bits))
+
+    def refresh_daily(self):
+        if getattr(self, "_daily_loading", False):
+            return
+        self._daily_loading = True
+        p = self.pal
+        if hasattr(self, "daily_hint"):
+            self.daily_hint.configure(text="正在获取…", fg=p["text_muted"])
+
+        def worker():
+            try:
+                d = fetch_daily()
+                save_daily_cache(d)
+                self.after(0, lambda: self._on_daily(d, None))
+            except Exception as e:
+                self.after(0, lambda: self._on_daily(None, str(e)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_daily(self, data, err):
+        p = self.pal
+        self._daily_loading = False
+        if data:
+            self.daily_data = data
+            self._render_daily(data)
+            stamp = data.get("fetchedAt") or time.strftime("%H:%M:%S")
+            if hasattr(self, "daily_hint"):
+                self.daily_hint.configure(text=f"✓ 已更新 · {stamp}",
+                                          fg=p["success"])
+            return
+        cached = load_daily_cache()
+        if cached.get("items"):
+            self.daily_data = cached
+            self._render_daily(cached)
+            if hasattr(self, "daily_hint"):
+                self.daily_hint.configure(text=f"⚠ 刷新失败，显示缓存 · {err}",
+                                          fg=p["error"])
+        else:
+            self._render_daily({"items": []})
+            if hasattr(self, "daily_hint"):
+                self.daily_hint.configure(text=f"⚠ 获取失败 · {err}", fg=p["error"])
+
+    def _schedule_daily_tick(self):
+        """每分钟检查一次，跨过 00:00 就自动刷新密码。
+
+        不依赖 after(ms) 的超长定时（跨天会因休眠/时钟漂移失准），
+        而是每次 tick 比较「缓存里的日期」和「今天」，不等就拉。
+        """
+        if getattr(self, "_daily_tick_job", None):
+            return
+
+        def tick():
+            self._daily_tick_job = None
+            try:
+                today = time.strftime("%Y-%m-%d")
+                cached_date = (self.daily_data or {}).get("date") or ""
+                if cached_date != today and not self._daily_loading:
+                    self.refresh_daily()
+            except Exception:
+                pass
+            self._daily_tick_job = self.after(60000, tick)
+
+        self._daily_tick_job = self.after(60000, tick)
 
     def _build_detail(self, parent):
         p, fm = self.pal, self.fam
@@ -1327,6 +1528,23 @@ class App(tk.Tk):
             self._rebuild_families()
             self.apply_filter()
 
+    def _load_daily(self):
+        """先显示缓存，再后台刷新；随后启动每分钟检查，跨天自动换密码。"""
+        cached = load_daily_cache()
+        if cached.get("items"):
+            self.daily_data = cached
+            self._render_daily(cached)
+            self.daily_hint.configure(text="每日 0 点后自动更新",
+                                      fg=self.pal["text_muted"])
+        else:
+            self._render_daily({"items": []})
+        if not cached.get("items") or cached.get("date") != time.strftime("%Y-%m-%d"):
+            self.refresh_daily()
+        else:
+            self.daily_hint.configure(text="每日 0 点后自动更新",
+                                      fg=self.pal["text_muted"])
+        self._schedule_daily_tick()
+
     def _spin(self):
         frames = "◐◓◑◒"
         if not self._loading:
@@ -1344,6 +1562,10 @@ class App(tk.Tk):
         self.btn_refresh.set_text("⟳  刷新中")
         self.progress.configure(value=0)
         self._spin()
+        try:
+            self.refresh_daily()
+        except Exception:
+            pass
 
         def worker():
             def on_page(items, page, pages, total):
@@ -1413,6 +1635,10 @@ class App(tk.Tk):
             self.pill.set_text(keep["q"])
         self.apply_filter()
         self._restore_detail(keep["selected"])
+        if getattr(self, "daily_data", None):
+            self._render_daily(self.daily_data)
+            self.daily_hint.configure(text="每日 0 点后自动更新",
+                                      fg=self.pal["text_muted"])
         self.after(30, self._native_chrome)
 
     def _restore_detail(self, sid):

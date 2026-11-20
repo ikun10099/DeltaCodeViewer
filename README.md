@@ -1,7 +1,13 @@
 # 三角洲行动 · 改枪码库
 
 三角洲行动（Delta Force）改枪码查看器，**Windows 桌面版（tkinter）+ Android 版（WebView 壳）** 双端实现。
-数据源：`https://delta-code.cn/api/loadouts`（公开只读接口）。
+
+数据源：
+
+- 改枪码 `https://delta-code.cn/api/loadouts`
+- 今日地图密码 `https://delta-code.cn/api/daily-password`
+
+均为公开只读接口。
 
 <img src="icon_512.png" width="120" alt="图标">
 
@@ -9,18 +15,18 @@
 
 ## 直接下载
 
-前往 **[Releases](https://github.com/ikun10099/-/releases/latest)** 页面下载，点开 `Assets` 即可：
+前往 **[Releases](https://github.com/ikun10099/DeltaCodeViewer/releases/latest)** 页面下载，点开 `Assets` 即可：
 
 | 平台 | 文件 | 大小 | 直链 |
 |---|---|---|---|
-| Windows 10/11 x64（免安装单文件） | `DeltaCodeViewer-portable-win64.exe` | 11.5 MB | [下载](https://github.com/ikun10099/-/releases/latest/download/DeltaCodeViewer-portable-win64.exe) |
-| Android 5.0+（arm64 / armv7 / x86_64 通用） | `DeltaCodeViewer-android.apk` | 157 KB | [下载](https://github.com/ikun10099/-/releases/latest/download/DeltaCodeViewer-android.apk) |
+| Windows 10/11 x64（免安装单文件） | `DeltaCodeViewer-portable-win64.exe` | 11.5 MB | [下载](https://github.com/ikun10099/DeltaCodeViewer/releases/latest/download/DeltaCodeViewer-portable-win64.exe) |
+| Android 5.0+（arm64 / armv7 / x86_64 通用） | `DeltaCodeViewer-android.apk` | 161 KB | [下载](https://github.com/ikun10099/DeltaCodeViewer/releases/latest/download/DeltaCodeViewer-android.apk) |
 
-SHA-256：
+SHA-256（v3.2）：
 
 ```
-6DB9472E0FB4C301290C1203F974EB8AD60126B5A28745B49F0F3BEFBD237B2E  DeltaCodeViewer-portable-win64.exe
-4055AC73C74008E4E97A4E226BA1D0DFA3DECC5F9A85287B6A7E99B0888B47CC  DeltaCodeViewer-android.apk
+4C685C3A9D74B2258C44DC3892CA7979A58E834E621A437AB21B536495FBA12E  DeltaCodeViewer-portable-win64.exe
+928469865101FFBBBC21ECE23A97D9B030F3ACBB6A274786E6EF0D50357597D1  DeltaCodeViewer-android.apk
 ```
 
 > `releases/latest/download/<文件名>` 是 GitHub 的稳定直链，发新版后自动指向最新，不用改链接。
@@ -32,6 +38,7 @@ SHA-256：
 ## 功能
 
 - **1342 条改枪码**全量分页拉取（12 页 × 120 条），本地缓存离线可读
+- **今日地图密码**：六张地图每日动态密码（零号大坝 / 长弓溪谷 / 巴克什 / 航天基地 / 潮汐监狱 / AZ3），显示官方更新时间与本地拉取时刻，**每天 0 点后自动刷新**，只读展示
 - **武器家族分类**：突击步枪 / 冲锋枪 / 射手步枪 / 狙击枪 / 轻机枪 / 霰弹枪 / 手枪 / 套装 / 特殊 / 其他
 - **金枪客任务分类**：`tags / name / player / core / slug` 五字段联合判定，命中 29 条，带「阶段」列并按阶段排序
 - **搜索**：武器 / 配装名 / 作者 / 改枪码 / 标签 全字段子串匹配
@@ -39,6 +46,7 @@ SHA-256：
 - **一键复制**改枪码到剪贴板
 - **深色 / 浅色双主题**
 - 单实例运行、原子写缓存（tmp + rename）、拉取失败自动回退缓存
+- **429 退避重试**：服务端限流 60 次/分钟，撞限流时按 0.9s×(n+1) 递增等待后重试
 
 ---
 
@@ -94,6 +102,13 @@ pyinstaller --noconfirm --clean --windowed `
 
 > 不要加 `--runtime-tmpdir` 指向固定路径 —— 换机器 / 换用户名会因目录不存在直接启动失败。
 
+### 今日地图密码卡片
+
+- 布局：3 列 × 2 行网格，卡片式只读展示，不可点击复制
+- 时间戳：`官方 HH:MM  ·  拉取 HH:MM:SS`，前者是服务端声明的更新时间，后者是本地实际拉取时刻
+- 自动刷新：`_schedule_daily_tick()` 每 60 秒比对一次缓存日期与本地日期，跨天就触发拉取；不用超长 `after(ms)` 是因为休眠 / 时钟漂移会让长定时失准
+- 缓存：`%LOCALAPPDATA%\DeltaCodeViewer\daily.json`，tmp + `os.replace` 原子写；拉取失败自动回退缓存并标注「⚠ 刷新失败，显示缓存」
+
 ---
 
 ## Android 版
@@ -125,9 +140,11 @@ keytool -genkeypair -v -keystore keystore\deltacode.jks -alias deltacode `
 Android 端实现要点：
 
 - UI 是 `assets/` 里的 H5（HTML + CSS + 原生 JS，无框架），CSS 变量完整复刻桌面版 30 键调色板
-- Java 侧负责 HTTPS 拉取（UA 必带，否则 CDN 403）与缓存，通过 `@JavascriptInterface` 桥 `Native` 暴露给页面：`loadCache / readPref / writePref / startFetch / isFetching / copy / toast / appVersion`
+- Java 侧负责 HTTPS 拉取（UA 必带，否则 CDN 403）与缓存，通过 `@JavascriptInterface` 桥 `Native` 暴露给页面：`loadCache / loadDaily / startDailyFetch / isFetching / copy / toast / appVersion`
 - 分类与任务判定逻辑与 `app.py` 逐行对齐（`classify` 最长关键词优先、`matchQuest` 五字段、`questStep` 阶段正则）
-- 缓存写 `getFilesDir()/cache.json`，同样 tmp + rename 原子写
+- 今日密码卡片逻辑同样对齐：3×2 网格、`官方 … · 拉取 …`、每分钟 tick 跨天刷新
+- 缓存写 `getFilesDir()/cache.json` 与 `getFilesDir()/daily.json`，tmp + rename 原子写
+- 分页拉取后 `mergeWithCache()` 与旧缓存合并（新数据优先、旧条目补全），某页失败不会丢已有数据
 
 ---
 
@@ -155,7 +172,26 @@ Android 端实现要点：
 }
 ```
 
-接口分页：`totalPages=12`、`pageSize=120`、`total=1342`。
+```jsonc
+// daily.json
+{
+  "items": [
+    { "name": "零号大坝", "code": "3248" },
+    { "name": "长弓溪谷", "code": "7429" },
+    { "name": "巴克什",   "code": "9510" },
+    { "name": "航天基地", "code": "1980" },
+    { "name": "潮汐监狱", "code": "2125" },
+    { "name": "AZ3",      "code": "5182" }
+  ],
+  "date": "2026-11-21",
+  "updatedText": "11-21 00:00",
+  "isToday": true,
+  "fetchedAt": "00:53:07"
+}
+```
+
+改枪码接口分页：`totalPages=12`、`pageSize=120`、`total=1342`。
+今日密码接口不支持 `?date=` 参数，永远返回当天。
 
 ---
 
@@ -174,8 +210,10 @@ Android 端实现要点：
 ## 说明
 
 - 接口返回 `trusted: false` —— 站点自行声明数据未经审核，使用前请自行判断。
-- 请求必须带 `User-Agent`，否则 CDN 返回 403。
+- 请求必须同时带 `User-Agent` 与 `Accept-Language`，否则 CDN 返回 403；UA 含 `curl` / `python-requests` / `Java` / `okhttp` / `node-fetch` 等子串会被直接拒绝。
+- 接口限流 60 次/分钟（响应头 `x-ratelimit-limit` / `x-ratelimit-remaining`），刷新过于频繁会拿到 429，两端都做了递增退避。
 - 桌面版 Windows 10/11 x64 可用；PyInstaller 6.x bootloader 不再支持 Win7。
+- Android 端 targetSdk 34、minSdk 23，已在 Android 15 x86_64 模拟器实测通过。
 
 ---
 
