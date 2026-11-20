@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0e131b">
+<title>三角洲行动 改枪码库</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="theme-dark">
+
+<div id="app">
+  <header class="hdr">
+    <div class="brand">
+      <span class="logo">⬡</span>
+      <span class="bt">三角洲行动<em>改枪码库</em></span>
+    </div>
+    <div class="hact">
+      <button id="btnTheme" class="iconbtn" title="切换主题">◐</button>
+      <button id="btnRefresh" class="iconbtn acc" title="刷新数据">⟳</button>
+    </div>
+  </header>
+
+  <div class="searchwrap">
+    <div class="searchbox">
+      <span class="sic">🔍</span>
+      <input id="q" type="search" placeholder="搜索 武器 / 配装 / 作者 / 改枪码 / 标签" autocomplete="off" spellcheck="false">
+      <button id="btnClear" class="clr" hidden>✕</button>
+    </div>
+  </div>
+
+  <nav id="famrow" class="famrow"></nav>
+
+  <div class="sortrow">
+    <div class="sortchips" id="sortchips">
+      <button data-k="updatedAt" class="schip on">更新</button>
+      <button data-k="price" class="schip">造价</button>
+      <button data-k="copy_times" class="schip">复制</button>
+      <button data-k="quest_step" class="schip" id="chipStep" hidden>阶段</button>
+    </div>
+    <button id="btnDir" class="dirbtn">▼</button>
+  </div>
+
+  <main id="list" class="list"></main>
+
+  <div id="loading" class="loading" hidden>
+    <div class="spinner"></div>
+    <div class="ltext">正在拉取数据…</div>
+    <div class="lbar"><i id="lbarfill"></i></div>
+  </div>
+
+  <footer class="stat">
+    <span id="stLeft">就绪</span>
+    <span id="stMid"></span>
+    <span id="stRight" class="dot ok">●</span>
+  </footer>
+</div>
+
+<div id="sheetWrap" class="sheetwrap" hidden>
+  <div id="sheetMask" class="mask"></div>
+  <section id="sheet" class="sheet">
+    <div class="grip"></div>
+    <div class="shead">
+      <div class="sbadge" id="sBadge">● 其他</div>
+      <button id="btnClose" class="iconbtn">✕</button>
+    </div>
+    <h2 id="sTitle">—</h2>
+    <div id="sMeta" class="smeta"></div>
+    <div id="sTags" class="stags"></div>
+    <div class="codelabel">改枪码</div>
+    <pre id="sCode" class="code"></pre>
+    <button id="btnCopy" class="primary">⎘ 复制改枪码</button>
+    <div class="sfoot">数据来源: delta-code.cn</div>
+  </section>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
